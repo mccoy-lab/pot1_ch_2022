@@ -1,0 +1,299 @@
+// initialize
+initialize() {
+	initializeSLiMModelType("nonWF");
+	initializeSLiMOptions(keepPedigrees = T);
+	
+	// no recombination
+	initializeRecombinationRate(0);
+	
+	// initialize empty chromosomes
+	initializeMutationType("m1", 0.5, "f", 0.0);
+	initializeMutationRate(0);
+	initializeGenomicElementType("g1", m1, 1.0);
+	initializeGenomicElement(g1, 0, 1);
+	
+	// define constants for running simulation
+	// initial pop size
+	defineConstant("initial_size", 10000);
+	// number of days to simulate
+	defineConstant("final_age_days", 80 * 365);
+		
+	// customizable variables
+	if (exists("slimgui"))
+	{	
+		// number of days per generation
+		defineConstant("gen_time_days", 280);
+		
+		// mean initial telomere length
+		defineConstant("telo_mean", 10000);
+		// std dev initial telomere length
+		defineConstant("telo_sd", 1250);
+		// mean shortening length per generation
+		defineConstant("shorten_mean", 65);
+		// std dev shortening length per generation
+		defineConstant("shorten_sd", 70/6);
+		
+		// telomere death threshold
+		defineConstant("death_thresh", 4000);
+		
+		// probability of division being asymmetric, normal
+		defineConstant("pAsym", 0.9);
+		// probability of division being asymmetric, JAK2
+		defineConstant("pAsym_jak2", 0.8);
+		// subprobability of division being symmetric, normal
+		defineConstant("pSym", 0.525);
+		// subprobability of division being symmetric, JAK2
+		defineConstant("pSym_jak2", 0.6);		
+		
+		// reproduction multiplier for JAK2 mutants
+		defineConstant("jak2_mult", 1.1);
+	}
+}
+
+// TODO: implement pedigree tracking
+1 {
+	// add starting population of cells
+	sim.addSubpop("p1", initial_size - 1);
+	// select one cell to have the JAK2 mutation
+	choose_jak2_mutant();
+	
+	// set initial telomere length
+	set_telomere_lengths(p1);
+	set_telomere_lengths(p2);
+	
+	// set how many generations to simulate
+	sim.rescheduleScriptBlock(s1, start = final_age_days,
+											end = final_age_days);
+	
+	// track lineage for each cell - with individual.color?
+	//	p1.individuals.color = "";
+	
+	catn(paste("gen\tp1\tp2"));
+}
+
+s1 30000 {
+	sim.simulationFinished();
+}
+
+// decide which cells are reproducing this day
+first() {
+	// skip generation 1 because pops don't exist yet
+	if (sim.generation > 1) {
+		// sample cells with division probability 1/generation time
+		pop_size = p1.individualCount + p2.individualCount;
+		cells_to_divide = rbinom(pop_size, 1, 1/gen_time_days);
+		
+		// set p1 tag field to determine division type for this day
+		p1_tags = sapply(rep(1/gen_time_days, p1.individualCount),
+								"set_division_type(applyValue, pAsym, pSym);");
+		p1.individuals.tag = p1_tags;
+		
+		// repeat for p2 with JAK2 division probability
+		if (p2.individualCount > 0) {
+			p2_tags = sapply(rep(1/gen_time_days * jak2_mult, p2.individualCount),
+								"set_division_type(applyValue, pAsym_jak2, pSym_jak2);");
+			p2.individuals.tag = p2_tags;
+		}
+	}
+}
+
+// generate daughter cells
+reproduction() {
+	// only pick cells that were chosen to divide symmetrically today
+	if (individual.tag == 2) {
+		// clonal reproduction
+		individual.subpopulation.addCloned(individual);
+		// shorten telomeres for this cell
+		individual.tagF = shorten_telomeres(individual.tagF);
+	}
+}
+
+// use modifyChild to set tag fields for daughter cells
+modifyChild() {
+	// cells inherit telomere length from parent cell
+	child.tagF = parent1.tagF;
+	// initialize tag field (cell division type)
+	child.tag = 0;
+	
+	// return True so that child is created
+	return T;
+}
+
+// cell death and mutation
+early() {
+	// can't do in generation 1 because pops don't exist yet
+	if (sim.generation > 1) {
+		// asymmetric division
+		asym_divide(p1);
+		asym_divide(p2);
+		
+		// kill cells if their telomeres are too short
+		if (p1.individualCount > 0)
+			kill_cells(p1);
+		if (p2.individualCount > 0)
+			kill_cells(p2);
+			
+		// select cells every day to differentiate asymmetrically (drop out of HSC pop)
+		// this happens after telomere death because it involves setting fitness
+		asym_diff(p1);
+		asym_diff(p2);
+	}
+}
+
+late() {
+	// re-set tag field
+	p1.individuals.tag = 0;
+	p2.individuals.tag = 0;
+	
+//	catn(paste(sim.generation, "\t", p1.individualCount, "\t", p2.individualCount));
+	catn(paste(sim.generation, "telomeres:", mean(p1.individuals.tagF)));
+	catn(paste(sim.generation, "JAK2 telomeres:", mean(p2.individuals.tagF)));
+}
+
+
+
+// ****************************************** //
+// ****************************************** //
+// ****************************************** //
+
+
+
+/* ************ HELPER FUNCTIONS ************ */
+
+/*
+	Sets starting telomere length of all individuals in the `tagF`
+	field, drawn from a normal distribution.
+	@param	p	subpop ID to work on
+*/
+function (void)set_telomere_lengths(Nio<Subpopulation> p)
+{
+	// draw telomere lengths from a normal distribution
+	lengths = rnorm(p.individualCount, telo_mean, telo_sd);
+	// set each individual's tagF field to telomere length
+	p.individuals.tagF = lengths;
+}
+
+/*
+	Initializes p2, the JAK2 population, with one cell.
+*/
+function (void)choose_jak2_mutant(void)
+{
+	// migrate one cell to p2 (JAK2 population)
+	sim.addSubpop("p2", 1);
+}
+
+/*
+	Chooses a cell division type based on baseline probabilities.
+	@param	division_prob			probability of cell division for this pop
+	@param	asym_division_prob	probability that division is asymmetric
+	@param	sym_division_prob		sub-probability that division is symmetric
+	@return	integer					cell's tag field for this day:
+											0 no division
+											1 asymmetric division
+											2 symmetric division
+											3 differentiation
+*/
+function (integer)set_division_type(float division_prob,
+												float asym_division_prob,
+												float sym_division_prob) {
+	// whether or not to divide
+	if (rbinom(1, 1, division_prob) == 0) {
+		return 0; // no division
+	}
+	else {
+		// asymmetric division
+		if (rbinom(1, 1, asym_division_prob) == 1) {
+			return 1;
+		}
+		else {
+			// symmetric division
+			if (rbinom(1, 1, sym_division_prob) == 1) {
+				return 2;
+			}
+			// differentiation
+			else {
+				return 3;
+			}
+		}
+	}
+}
+
+/*
+	Identifies cells chosen to reproduce asymmetrically (i.e., shorten
+	their telomeres) every generation and reduces their telomere length.
+	@param	p	subpop ID to work on
+*/
+function (void)asym_divide(Nio<Subpopulation> p)
+{
+	// choose cells marked for asymmetric division
+	inds = p.individuals[p.individuals.tag == 1];
+	
+	// shorten telomere lengths
+	if (length(inds) > 0) {
+		inds.tagF = sapply(inds.tagF,
+								"shorten_telomeres(applyValue);");
+	}
+}
+
+/*
+	Given a starting telomere length, draws a shortened length from a
+	normal distribution.
+	@param	start_len	starting telomere length
+	@return	float			shortened telomere length
+*/
+function (float)shorten_telomeres(float start_len)
+{
+	// draw telomere decrease length from a normal distribution
+	decrease_len = rnorm(1, shorten_mean, shorten_sd);
+	return(start_len - decrease_len);
+}
+
+/*
+	Identifies cells chosen to differentiate (i.e., drop out of HSC
+	population) and sets their fitness to 0.
+	@param	p	subpop ID to work on
+*/
+function (void)asym_diff(Nio<Subpopulation> p)
+{
+	// choose cells marked for differentiation
+	inds = p.individuals[p.individuals.tag == 3];
+	
+	// set fitness to 0 (death at viability check stage)
+	inds.fitnessScaling = 0;
+}
+
+/*
+	Sets fitness of cells in a population based on telomere length.
+	@param	p	subpop ID to work on
+*/
+function (void)kill_cells(Nio<Subpopulation> p)
+{
+	// get telomere lengths for all individuals
+	telos = p.individuals.tagF;
+	
+	// get corresponding fitness for telomere length
+	new_fitnesses = sapply(telos, "get_fitness(applyValue);");
+	p.individuals.fitnessScaling = new_fitnesses;
+}
+
+// TODO: parameters/distribution for telomere death
+/*
+	Calculates fitness for cell based on telomere length.
+	@param	telo_len	cell's current telomere length
+	@return	float		fitness modifier for cell
+*/
+function (float)get_fitness(float telo_len)
+{
+	// >4kb - you're safe
+	if (telo_len > death_thresh) {
+		return 1.0;
+	}
+	// <=2kb - you're dead
+	if (telo_len <= 2000) {
+		return 0.0;
+	}
+	// in between - calculate fitness, decreases linearly from 4kb-2kb
+	else {
+		return 0.5 * (telo_len - 2000) * 1/1000;
+	}
+}
