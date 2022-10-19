@@ -1,7 +1,6 @@
 // initialize
 initialize() {
 	initializeSLiMModelType("nonWF");
-	initializeSLiMOptions(keepPedigrees = T);
 	
 	// no recombination
 	initializeRecombinationRate(0);
@@ -14,18 +13,18 @@ initialize() {
 	
 	// define constants for running simulation
 	// initial pop size
-	defineConstant("initial_size", 10000);
+	defineConstant("initial_size", 100000);
 	// number of days to simulate
-	defineConstant("final_age_days", 80 * 365);
-		
-	// customizable variables
+	defineConstant("final_age_days", 100 * 365);
+	
+	// use these values if in slimgui; otherwise take from command line
 	if (exists("slimgui"))
 	{	
 		// number of days per generation
 		defineConstant("gen_time_days", 280);
 		
 		// mean initial telomere length
-		defineConstant("telo_mean", 10000);
+		defineConstant("telo_mean", 8000);
 		// std dev initial telomere length
 		defineConstant("telo_sd", 1250);
 		// mean shortening length per generation
@@ -38,24 +37,23 @@ initialize() {
 		
 		// probability of division being asymmetric, normal
 		defineConstant("pAsym", 0.9);
-		// probability of division being asymmetric, JAK2
-		defineConstant("pAsym_jak2", 0.8);
+		// probability of division being asymmetric, driver mutant
+		defineConstant("pAsym_mut", 0.8);
 		// subprobability of division being symmetric, normal
 		defineConstant("pSym", 0.525);
-		// subprobability of division being symmetric, JAK2
-		defineConstant("pSym_jak2", 0.6);		
+		// subprobability of division being symmetric, driver mutant
+		defineConstant("pSym_mut", 0.525);		
 		
-		// reproduction multiplier for JAK2 mutants
-		defineConstant("jak2_mult", 1.1);
+		// reproduction multiplier for driver mutants
+		defineConstant("mut_mult", 1.1);
 	}
 }
 
-// TODO: implement pedigree tracking
 1 {
 	// add starting population of cells
 	sim.addSubpop("p1", initial_size - 1);
-	// select one cell to have the JAK2 mutation
-	choose_jak2_mutant();
+	// select one cell to have the driver mutation
+	choose_mutant();
 	
 	// set initial telomere length
 	set_telomere_lengths(p1);
@@ -65,13 +63,11 @@ initialize() {
 	sim.rescheduleScriptBlock(s1, start = final_age_days,
 											end = final_age_days);
 	
-	// track lineage for each cell - with individual.color?
-	//	p1.individuals.color = "";
-	
-	catn(paste("gen\tp1\tp2"));
+	// print header for output
+	catn(paste("gen\tinfo\tp1\tp2"));
 }
 
-s1 30000 {
+s1 36500 {
 	sim.simulationFinished();
 }
 
@@ -79,19 +75,22 @@ s1 30000 {
 first() {
 	// skip generation 1 because pops don't exist yet
 	if (sim.generation > 1) {
+	
 		// sample cells with division probability 1/generation time
 		pop_size = p1.individualCount + p2.individualCount;
 		cells_to_divide = rbinom(pop_size, 1, 1/gen_time_days);
 		
 		// set p1 tag field to determine division type for this day
-		p1_tags = sapply(rep(1/gen_time_days, p1.individualCount),
+		if (p1.individualCount > 0) {
+			p1_tags = sapply(rep(1/gen_time_days, p1.individualCount),
 								"set_division_type(applyValue, pAsym, pSym);");
-		p1.individuals.tag = p1_tags;
+			p1.individuals.tag = p1_tags;
+		}
 		
-		// repeat for p2 with JAK2 division probability
+		// repeat for p2 with driver mutant division probability
 		if (p2.individualCount > 0) {
-			p2_tags = sapply(rep(1/gen_time_days * jak2_mult, p2.individualCount),
-								"set_division_type(applyValue, pAsym_jak2, pSym_jak2);");
+			p2_tags = sapply(rep(1/gen_time_days * mut_mult, p2.individualCount),
+								"set_division_type(applyValue, pAsym_mut, pSym_mut);");
 			p2.individuals.tag = p2_tags;
 		}
 	}
@@ -112,7 +111,7 @@ reproduction() {
 modifyChild() {
 	// cells inherit telomere length from parent cell
 	child.tagF = parent1.tagF;
-	// initialize tag field (cell division type)
+	// initialize tag field (cell division type) for child
 	child.tag = 0;
 	
 	// return True so that child is created
@@ -132,7 +131,7 @@ early() {
 			kill_cells(p1);
 		if (p2.individualCount > 0)
 			kill_cells(p2);
-			
+		
 		// select cells every day to differentiate asymmetrically (drop out of HSC pop)
 		// this happens after telomere death because it involves setting fitness
 		asym_diff(p1);
@@ -145,20 +144,19 @@ late() {
 	p1.individuals.tag = 0;
 	p2.individuals.tag = 0;
 	
-//	catn(paste(sim.generation, "\t", p1.individualCount, "\t", p2.individualCount));
-	catn(paste(sim.generation, "telomeres:", mean(p1.individuals.tagF)));
-	catn(paste(sim.generation, "JAK2 telomeres:", mean(p2.individuals.tagF)));
+	// print pop size and mean telo length for this day
+	catn(paste(sim.generation, "\tsize\t", get_popsize(p1),
+										"\t", get_popsize(p2)));
+	catn(paste(sim.generation, "\ttelo\t", get_telomean(p1),
+										"\t", get_telomean(p2)));
 }
 
 
 
-// ****************************************** //
-// ****************************************** //
-// ****************************************** //
 
-
-
-/* ************ HELPER FUNCTIONS ************ */
+//==================================================//
+//================ HELPER FUNCTIONS ================//
+//==================================================//
 
 /*
 	Sets starting telomere length of all individuals in the `tagF`
@@ -174,11 +172,11 @@ function (void)set_telomere_lengths(Nio<Subpopulation> p)
 }
 
 /*
-	Initializes p2, the JAK2 population, with one cell.
+	Initializes p2, the driver mutant population, with one cell.
 */
-function (void)choose_jak2_mutant(void)
+function (void)choose_mutant(void)
 {
-	// migrate one cell to p2 (JAK2 population)
+	// migrate one cell to p2 (driver mutant population)
 	sim.addSubpop("p2", 1);
 }
 
@@ -276,7 +274,6 @@ function (void)kill_cells(Nio<Subpopulation> p)
 	p.individuals.fitnessScaling = new_fitnesses;
 }
 
-// TODO: parameters/distribution for telomere death
 /*
 	Calculates fitness for cell based on telomere length.
 	@param	telo_len	cell's current telomere length
@@ -295,5 +292,35 @@ function (float)get_fitness(float telo_len)
 	// in between - calculate fitness, decreases linearly from 4kb-2kb
 	else {
 		return 0.5 * (telo_len - 2000) * 1/1000;
+	}
+}
+
+/*
+	Returns current size for a population.
+	@param	p			population to get size of
+	@return	integer	current pop size (or 0)
+*/
+function(integer)get_popsize(Nio<Subpopulation> p)
+{
+	if (p.individualCount > 0) {
+		return p.individualCount;
+	}
+	else {
+		return 0;
+	}
+}
+
+/*
+	Returns mean telomere length for a population.
+	@param	p		population to get telomere length for
+	@return	float	mean telomere length (or 0 if p is empty)
+*/
+function(float)get_telomean(Nio<Subpopulation> p)
+{
+	if (p.individualCount > 0) {
+		return mean(p.individuals.tagF);
+	}
+	else {
+		return 0.0;
 	}
 }
