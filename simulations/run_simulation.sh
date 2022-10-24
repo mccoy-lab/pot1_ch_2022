@@ -15,7 +15,7 @@
 SLIM=~/code/SLiM-3.7.1/bin/slim
 
 # simulation script
-simfile="hsc_simulation_v5.slim"
+simfile="hpc_simulation.slim"
 
 # make directory for output files
 outdir=${simtype}_${telo_mean}
