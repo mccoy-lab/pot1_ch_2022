@@ -2,7 +2,7 @@
 
 ## Scripts in this repo
 
-* `hpc_simulation_v5.slim`: SLiM code for simulation
+* `hpc_simulation.slim`: SLiM code for simulation
 * `run_simulation.sh`: bash script for running one simulation
 * `run_simulation_wrapper.sh`: slurm wrapper script for parallelizing multiple simulations on a computing cluster
 
