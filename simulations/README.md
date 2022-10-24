@@ -1,4 +1,4 @@
-# Simulations of hematopoetic progenitor cells
+# Simulations of hematopoietic progenitor cells
 
 ## Scripts in this repo
 
