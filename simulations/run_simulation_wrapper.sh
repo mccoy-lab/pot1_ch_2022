@@ -5,11 +5,6 @@
 # passing in background-specific parameters to sbatch  #
 #======================================================#
 
-# <1st percentile, telomerase loss of function
-sbatch --job-name=wt_4kb \
-	--export=ALL,simtype="wt",telo_mean=4000,shorten_mean=150 \
-	run_simulation.sh
-
 # 1st percentile, short telomere
 sbatch --job-name=wt_8kb \
        --export=ALL,simtype="wt",telo_mean=8600,shorten_mean=100 \

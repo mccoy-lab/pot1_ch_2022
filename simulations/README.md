@@ -3,8 +3,9 @@
 ## Scripts in this repo
 
 * `hpc_simulation.slim`: SLiM code for simulation
-* `run_simulation.sh`: bash script for running one simulation
-* `run_simulation_wrapper.sh`: slurm wrapper script for parallelizing multiple simulations on a computing cluster
+* `run_simulation.sh`: slurm script for running 10,000 simulations
+* `run_simulation_wrapper.sh`: wrapper script for running multiple simulation types
+* `simulation_analysis.R`: analysis code
 
 ## Description of simulation
 
